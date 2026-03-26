@@ -5,125 +5,175 @@ import '../models/cric_score_model.dart';
 import '../models/scorecard_model.dart' as sc;
 
 class CricketApiService {
-  static const _apiKey = 'a21f29da-cca3-45c2-b8db-6fcccef64f50';
-  static const _scoreUrl = 'https://api.cricapi.com/v1/cricScore?apikey=$_apiKey';
-  static const _scorecardUrl = 'https://api.cricapi.com/v1/match_scorecard?apikey=$_apiKey';
+  static const _apiKey          = 'a21f29da-cca3-45c2-b8db-6fcccef64f50';
+  static const _baseUrl         = 'https://api.cricapi.com/v1';
 
-  static const _cacheDuration = Duration(minutes: 2);
-  static List<CricScoreMatch>? _cache;
-  static DateTime? _cachedAt;
-  static bool _fetching = false;
+  // Cache durations
+  static const _liveCacheDuration     = Duration(minutes: 2);
+  static const _upcomingCacheDuration = Duration(minutes: 15);
+  static const _scorecardCacheDuration = Duration(seconds: 60);
+
+  // Live matches cache (from /currentMatches)
+  static List<LiveMatch>? _liveCache;
+  static DateTime?         _liveCachedAt;
+  static bool              _fetchingLive = false;
+
+  // Upcoming cache (from /cricScore)
+  static List<CricScoreMatch>? _upcomingCache;
+  static DateTime?              _upcomingCachedAt;
+  static bool                   _fetchingUpcoming = false;
+
+  // Per-match scorecard cache
+  static final Map<String, sc.ScorecardModel> _scorecardCache    = {};
+  static final Map<String, DateTime>           _scorecardCachedAt = {};
 
   static void _log(String msg) => developer.log(msg, name: 'CricAPI');
 
-  // ── Core fetch — ONE call covers everything ───────────────────────────────
+  // ── Live matches — /currentMatches gives r/w/o per innings ───────────────
 
-  static Future<List<CricScoreMatch>> _all({bool force = false}) async {
-    // Return cache if still fresh
-    if (!force && _cache != null && _cachedAt != null &&
-        DateTime.now().difference(_cachedAt!) < _cacheDuration) {
-      _log('cache hit — ${_cache!.length} matches');
-      return _cache!;
+  static Future<List<LiveMatch>> getLiveMatches({bool forceRefresh = false}) async {
+    if (!forceRefresh &&
+        _liveCache != null &&
+        _liveCachedAt != null &&
+        DateTime.now().difference(_liveCachedAt!) < _liveCacheDuration) {
+      _log('live cache hit (${_liveCache!.length})');
+      return _liveCache!;
     }
+    if (_fetchingLive) return _liveCache ?? [];
 
-    // Prevent concurrent fetches
-    if (_fetching) {
-      _log('already fetching, returning cache');
-      return _cache ?? [];
-    }
-
-    _fetching = true;
+    _fetchingLive = true;
     try {
-      _log('GET $_scoreUrl');
-      final res = await http
-          .get(Uri.parse(_scoreUrl))
+      final url = '$_baseUrl/currentMatches?apikey=$_apiKey&offset=0';
+      _log('GET $url');
+      final res = await http.get(Uri.parse(url))
           .timeout(const Duration(seconds: 15));
-
-      _log('HTTP ${res.statusCode}  body_len=${res.body.length}');
-
-      if (res.statusCode != 200) {
-        _log('non-200, keeping cache');
-        return _cache ?? [];
-      }
+      _log('HTTP ${res.statusCode}');
+      if (res.statusCode != 200) return _liveCache ?? [];
 
       final body   = json.decode(res.body) as Map<String, dynamic>;
       final status = body['status'] as String? ?? '';
       final info   = body['info']   as Map<String, dynamic>?;
-      _log('status=$status  hitsToday=${info?['hitsToday']}/${info?['hitsLimit']}');
+      _log('status=$status hits=${info?['hitsToday']}/${info?['hitsLimit']}');
+      if (status != 'success') return _liveCache ?? [];
 
-      if (status != 'success') {
-        _log('API failure: ${body['reason'] ?? body['message'] ?? 'unknown'}');
-        return _cache ?? [];
+      final raw = body['data'] as List<dynamic>? ?? [];
+      final all = raw.map((e) =>
+          LiveMatch.fromJson(e as Map<String, dynamic>)).toList();
+
+      final live = all.where((m) => m.isLive).toList();
+      _log('currentMatches: ${all.length} total, ${live.length} live');
+      for (final m in live) {
+        _log('  LIVE: ${m.name} — t1innings=${m.t1Innings.length} t2innings=${m.t2Innings.length}');
+        for (final s in m.score) {
+          _log('    inning=${s.inning} ${s.scoreStr}');
+        }
       }
 
-      final raw     = body['data'] as List<dynamic>? ?? [];
-      final matches = raw.map((e) =>
-          CricScoreMatch.fromJson(e as Map<String, dynamic>)).toList();
-
-      final live    = matches.where((x) => x.ms == 'live').length;
-      final fixture = matches.where((x) => x.ms == 'fixture').length;
-      final result  = matches.where((x) => x.ms == 'result').length;
-      _log('parsed ${matches.length} — live=$live fixture=$fixture result=$result');
-
-      _cache    = matches;
-      _cachedAt = DateTime.now();
-      return matches;
-    } catch (e, st) {
-      _log('exception: $e\n$st');
-      return _cache ?? [];   // never throw — callers must not set error state from this
+      _liveCache    = live;
+      _liveCachedAt = DateTime.now();
+      return live;
+    } catch (e) {
+      _log('getLiveMatches exception: $e');
+      return _liveCache ?? [];
     } finally {
-      _fetching = false;
+      _fetchingLive = false;
     }
   }
 
-  // ── Public methods ────────────────────────────────────────────────────────
-
-  static Future<List<CricScoreMatch>> getLiveMatches({bool forceRefresh = false}) async {
-    final all = await _all(force: forceRefresh);
-    final live = all.where((x) => x.ms == 'live').toList();
-    _log('getLiveMatches → ${live.length}');
-    return live;
-  }
+  // ── Upcoming matches — /cricScore is cheapest source ─────────────────────
 
   static Future<List<CricScoreMatch>> getUpcomingMatches({bool forceRefresh = false}) async {
-    final all = await _all(force: forceRefresh);
-    final upcoming = all.where((x) => x.ms == 'fixture').toList();
+    if (!forceRefresh &&
+        _upcomingCache != null &&
+        _upcomingCachedAt != null &&
+        DateTime.now().difference(_upcomingCachedAt!) < _upcomingCacheDuration) {
+      _log('upcoming cache hit (${_upcomingCache!.length})');
+      return _upcomingCache!;
+    }
+    if (_fetchingUpcoming) return _upcomingCache ?? [];
 
-    // Sort soonest first
-    upcoming.sort((a, b) {
-      try {
-        return DateTime.parse(a.dateTimeGMT).compareTo(DateTime.parse(b.dateTimeGMT));
-      } catch (_) { return 0; }
-    });
+    _fetchingUpcoming = true;
+    try {
+      final url = '$_baseUrl/cricScore?apikey=$_apiKey';
+      _log('GET $url');
+      final res = await http.get(Uri.parse(url))
+          .timeout(const Duration(seconds: 15));
+      _log('HTTP ${res.statusCode}');
+      if (res.statusCode != 200) return _upcomingCache ?? [];
 
-    _log('getUpcomingMatches → ${upcoming.length}');
-    return upcoming;
+      final body   = json.decode(res.body) as Map<String, dynamic>;
+      final status = body['status'] as String? ?? '';
+      if (status != 'success') return _upcomingCache ?? [];
+
+      final raw = body['data'] as List<dynamic>? ?? [];
+      final all = raw.map((e) =>
+          CricScoreMatch.fromJson(e as Map<String, dynamic>)).toList();
+
+      final upcoming = all.where((x) => x.ms == 'fixture').toList()
+        ..sort((a, b) {
+          try {
+            return DateTime.parse(a.dateTimeGMT)
+                .compareTo(DateTime.parse(b.dateTimeGMT));
+          } catch (_) { return 0; }
+        });
+
+      _log('cricScore: ${upcoming.length} upcoming fixtures');
+      _upcomingCache    = upcoming;
+      _upcomingCachedAt = DateTime.now();
+      return upcoming;
+    } catch (e) {
+      _log('getUpcomingMatches exception: $e');
+      return _upcomingCache ?? [];
+    } finally {
+      _fetchingUpcoming = false;
+    }
   }
 
-  static Future<sc.ScorecardModel?> getMatchScorecard(String matchId) async {
-    try {
-      final url = '$_scorecardUrl&id=$matchId';
-      _log('scorecard GET $url');
-      final res = await http
-          .get(Uri.parse(url))
-          .timeout(const Duration(seconds: 15));
+  // ── Scorecard (detail screen only — costs 1 credit per call) ─────────────
 
-      if (res.statusCode == 200) {
-        final body = json.decode(res.body) as Map<String, dynamic>;
-        if (body['status'] == 'success') {
-          return sc.ScorecardModel.fromJson(body['data'] as Map<String, dynamic>);
-        }
-        _log('scorecard non-success: ${body['reason'] ?? body['message']}');
+  static Future<sc.ScorecardModel?> getMatchScorecard(
+    String matchId, {
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh) {
+      final cached   = _scorecardCache[matchId];
+      final cachedAt = _scorecardCachedAt[matchId];
+      if (cached != null &&
+          cachedAt != null &&
+          DateTime.now().difference(cachedAt) < _scorecardCacheDuration) {
+        _log('scorecard cache hit: $matchId');
+        return cached;
       }
-      return null;
+    }
+    try {
+      final url = '$_baseUrl/match_scorecard?apikey=$_apiKey&id=$matchId';
+      _log('scorecard GET $url');
+      final res = await http.get(Uri.parse(url))
+          .timeout(const Duration(seconds: 15));
+      _log('scorecard HTTP ${res.statusCode}');
+      if (res.statusCode != 200) return _scorecardCache[matchId];
+
+      final body = json.decode(res.body) as Map<String, dynamic>;
+      if (body['status'] != 'success') {
+        _log('scorecard non-success: ${body['reason'] ?? body['message']}');
+        return _scorecardCache[matchId];
+      }
+
+      final model = sc.ScorecardModel.fromJson(
+          body['data'] as Map<String, dynamic>);
+      _scorecardCache[matchId]    = model;
+      _scorecardCachedAt[matchId] = DateTime.now();
+      _log('scorecard OK: $matchId — ${model.scorecard.length} innings');
+      return model;
     } catch (e) {
       _log('scorecard exception: $e');
-      return null;
+      return _scorecardCache[matchId];
     }
   }
 
   static void invalidateCache() {
-    _cachedAt = null;
-    _log('cache invalidated');
+    _liveCachedAt     = null;
+    _upcomingCachedAt = null;
+    _log('all caches invalidated');
   }
 }

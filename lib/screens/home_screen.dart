@@ -18,13 +18,12 @@ class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
-  List<CricScoreMatch> _liveMatches     = [];
+  List<LiveMatch>      _liveMatches     = [];
   List<CricScoreMatch> _upcomingMatches = [];
 
   bool _isLoadingLive     = true;
   bool _isLoadingUpcoming = true;
   bool _upcomingError     = false;
-  bool _isUsingMock       = false;
 
   Timer? _refreshTimer;
 
@@ -56,7 +55,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) setState(() {
         _liveMatches   = matches;
         _isLoadingLive = false;
-        _checkMock();
       });
     } catch (_) {
       if (mounted) setState(() { _liveMatches = []; _isLoadingLive = false; });
@@ -71,16 +69,10 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) setState(() {
         _upcomingMatches   = matches;
         _isLoadingUpcoming = false;
-        _checkMock();
       });
     } catch (_) {
       if (mounted) setState(() { _isLoadingUpcoming = false; _upcomingError = true; });
     }
-  }
-
-  void _checkMock() {
-    final all = [..._liveMatches, ..._upcomingMatches];
-    _isUsingMock = all.isNotEmpty && all.every((x) => x.id.startsWith('mock-'));
   }
 
   Future<void> _onRefreshLive() async {
@@ -93,36 +85,24 @@ class _HomeScreenState extends State<HomeScreen>
     await _loadUpcoming(force: true);
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
-  // Column layout: fixed header (app bar + tabs) on top, Expanded TabBarView
-  // below. Nothing scrolls except the ListView inside each tab.
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.darkBg,
       body: SafeArea(
-        child: Column(
-          children: [
-            // ── Fixed header ───────────────────────────────────────────────
-            _buildHeader(),
-            _buildTabBar(),
-            if (_isUsingMock) _buildDemoBanner(),
-
-            // ── Scrollable tab content fills the rest ──────────────────────
-            Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                children: [_buildLiveTab(), _buildUpcomingTab()],
-              ),
+        child: Column(children: [
+          _buildHeader(),
+          _buildTabBar(),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [_buildLiveTab(), _buildUpcomingTab()],
             ),
-          ],
-        ),
+          ),
+        ]),
       ),
     );
   }
-
-  // ── Header (static, never scrolls) ────────────────────────────────────────
 
   Widget _buildHeader() {
     return Container(
@@ -135,51 +115,47 @@ class _HomeScreenState extends State<HomeScreen>
         ),
       ),
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppTheme.accentGreen.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: AppTheme.accentGreen.withOpacity(0.3)),
-              ),
-              child: const Icon(Icons.sports_cricket,
-                  color: AppTheme.accentGreen, size: 22),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.accentGreen.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+              border:
+                  Border.all(color: AppTheme.accentGreen.withOpacity(0.3)),
             ),
-            const SizedBox(width: 12),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('CricketLive',
-                  style: TextStyle(
-                      color: AppTheme.textPrimary,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800)),
-              Text('Live Scores & Updates',
-                  style: TextStyle(
-                      color: AppTheme.textSecondary.withOpacity(0.8),
-                      fontSize: 12)),
-            ]),
-            const Spacer(),
-            IconButton(
-              onPressed: () {
-                CricketApiService.invalidateCache();
-                _loadData();
-              },
-              icon: const Icon(Icons.refresh, color: AppTheme.textSecondary),
-              tooltip: 'Refresh',
-            ),
+            child: const Icon(Icons.sports_cricket,
+                color: AppTheme.accentGreen, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('CricketLive',
+                style: TextStyle(
+                    color: AppTheme.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800)),
+            Text('Live Scores & Updates',
+                style: TextStyle(
+                    color: AppTheme.textSecondary.withOpacity(0.8),
+                    fontSize: 12)),
           ]),
-          const SizedBox(height: 10),
-          Row(children: [
-            _chip('${_liveMatches.length} LIVE', AppTheme.liveRed),
-            const SizedBox(width: 8),
-            _chip('${_upcomingMatches.length} UPCOMING', AppTheme.upcomingBlue),
-          ]),
-        ],
-      ),
+          const Spacer(),
+          IconButton(
+            onPressed: () {
+              CricketApiService.invalidateCache();
+              _loadData();
+            },
+            icon: const Icon(Icons.refresh, color: AppTheme.textSecondary),
+          ),
+        ]),
+        const SizedBox(height: 10),
+        Row(children: [
+          _chip('${_liveMatches.length} LIVE', AppTheme.liveRed),
+          const SizedBox(width: 8),
+          _chip('${_upcomingMatches.length} UPCOMING', AppTheme.upcomingBlue),
+        ]),
+      ]),
     );
   }
 
@@ -199,8 +175,6 @@ class _HomeScreenState extends State<HomeScreen>
               letterSpacing: 0.5)),
     );
   }
-
-  // ── Tab bar (static, never scrolls) ───────────────────────────────────────
 
   Widget _buildTabBar() {
     return Container(
@@ -246,41 +220,8 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Demo banner ────────────────────────────────────────────────────────────
-
-  Widget _buildDemoBanner() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.goldYellow.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppTheme.goldYellow.withOpacity(0.35)),
-      ),
-      child: Row(children: [
-        const Icon(Icons.info_outline, color: AppTheme.goldYellow, size: 16),
-        const SizedBox(width: 8),
-        const Expanded(
-          child: Text(
-            'Showing demo data — API limit reached. '
-            'Live data resumes tomorrow automatically.',
-            style: TextStyle(
-                color: AppTheme.goldYellow, fontSize: 12, height: 1.4),
-          ),
-        ),
-        GestureDetector(
-          onTap: () { CricketApiService.invalidateCache(); _loadData(); },
-          child: const Icon(Icons.refresh, color: AppTheme.goldYellow, size: 16),
-        ),
-      ]),
-    );
-  }
-
-  // ── Tab content ────────────────────────────────────────────────────────────
-
   Widget _buildLiveTab() {
     if (_isLoadingLive) return _shimmer();
-
     if (_liveMatches.isEmpty) {
       return _emptyState(
         icon: Icons.sports_cricket,
@@ -291,7 +232,6 @@ class _HomeScreenState extends State<HomeScreen>
         onRetry: _onRefreshLive,
       );
     }
-
     return RefreshIndicator(
       onRefresh: _onRefreshLive,
       color: AppTheme.accentGreen,
@@ -305,7 +245,8 @@ class _HomeScreenState extends State<HomeScreen>
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(
-                builder: (_) => MatchDetailScreen(match: _liveMatches[i])),
+                builder: (_) =>
+                    MatchDetailScreen(match: _liveMatches[i])),
           ),
         ),
       ),
@@ -314,7 +255,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildUpcomingTab() {
     if (_isLoadingUpcoming) return _shimmer();
-
     if (_upcomingError) {
       return _emptyState(
         icon: Icons.wifi_off_rounded,
@@ -325,7 +265,6 @@ class _HomeScreenState extends State<HomeScreen>
         onRetry: _onRefreshUpcoming,
       );
     }
-
     if (_upcomingMatches.isEmpty) {
       return _emptyState(
         icon: Icons.event_note,
@@ -334,7 +273,6 @@ class _HomeScreenState extends State<HomeScreen>
         color: AppTheme.upcomingBlue,
       );
     }
-
     return RefreshIndicator(
       onRefresh: _onRefreshUpcoming,
       color: AppTheme.accentGreen,
@@ -349,22 +287,18 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
   Widget _shimmer() {
     return ListView.builder(
       physics: const NeverScrollableScrollPhysics(),
       padding: const EdgeInsets.only(top: 8),
       itemCount: 4,
-      itemBuilder: (_, __) {
-        return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          height: 120,
-          decoration: BoxDecoration(
-              color: AppTheme.surfaceDark,
-              borderRadius: BorderRadius.circular(16)),
-        );
-      },
+      itemBuilder: (_, __) => Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        height: 120,
+        decoration: BoxDecoration(
+            color: AppTheme.surfaceDark,
+            borderRadius: BorderRadius.circular(16)),
+      ),
     );
   }
 
@@ -379,48 +313,43 @@ class _HomeScreenState extends State<HomeScreen>
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                  color: color.withOpacity(0.1), shape: BoxShape.circle),
-              child: Icon(icon, color: color, size: 48),
-            ),
-            const SizedBox(height: 16),
-            Text(title,
-                style: const TextStyle(
-                    color: AppTheme.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text(subtitle,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: AppTheme.textSecondary,
-                    fontSize: 14,
-                    height: 1.5)),
-            if (showRetry && onRetry != null) ...[
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh, size: 18),
-                label: const Text('Retry'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: color.withOpacity(0.2),
-                  foregroundColor: color,
-                  elevation: 0,
-                  side: BorderSide(color: color.withOpacity(0.4)),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 10),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+                color: color.withOpacity(0.1), shape: BoxShape.circle),
+            child: Icon(icon, color: color, size: 48),
+          ),
+          const SizedBox(height: 16),
+          Text(title,
+              style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          Text(subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: AppTheme.textSecondary, fontSize: 14, height: 1.5)),
+          if (showRetry && onRetry != null) ...[
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('Retry'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: color.withOpacity(0.2),
+                foregroundColor: color,
+                elevation: 0,
+                side: BorderSide(color: color.withOpacity(0.4)),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 24, vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10)),
               ),
-            ],
+            ),
           ],
-        ),
+        ]),
       ),
     );
   }
