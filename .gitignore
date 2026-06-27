@@ -72,3 +72,8 @@ doc/api/
 .flutter-plugins
 .flutter-plugins-dependencies
 >>>>>>> 9548e92c9474e7bdea7e182bd498d54d0c25c708
+
+.gradle/
+android/.gradle/
+build/
+android/build/
